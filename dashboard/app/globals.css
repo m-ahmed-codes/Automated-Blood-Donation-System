@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #243047; border-radius: 2px; }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium
+           transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-1
+           focus:ring-offset-card disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono font-medium;
+  }
+  .card {
+    @apply bg-card border border-border rounded-xl p-4;
+  }
+}

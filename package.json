@@ -1,0 +1,25 @@
+{
+  "name": "blood-donor-backend",
+  "version": "1.0.0",
+  "description": "Autonomous emergency blood donor matching system",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --watch --env-file=.env.example server.js",
+    "dev": "node --watch --env-file=.env.example server.js"
+  },
+  "dependencies": {
+    "@google/genai": "^0.7.0",
+    "@supabase/supabase-js": "^2.43.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "morgan": "^1.10.0",
+    "node-telegram-bot-api": "^1.2.0",
+    "socks-proxy-agent": "^10.1.0",
+    "twilio": "^5.2.1",
+    "undici": "^8.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "blood-donor-backend",
+			"path": ".."
+		},
+		{
+			"name": "dashboard",
+			"path": "../../dashboard"
+		}
+	],
+	"settings": {}
+}
