@@ -9,8 +9,9 @@ const supabase = require('../config/supabase');
 const { parseDonorIntent } = require('./geminiService');
 const { cancelTimer } = require('./waveManager');
 const { sendToRequester } = require('./intakeService');
-// const { sendToDonor, sendToRequester } = require('../config/messaging');
 const { logMessage } = require('./logService');
+const { getRealETA } = require('./logisticsAgent');
+const { resolveHospitalCoords } = require('./matchingEngine');
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 async function handleDonorReply({ from, body, outreachRow }) {
@@ -107,16 +108,20 @@ async function handleConfirm(from, outreachRow, request, intent) {
     responded_at: new Date().toISOString(),
   }).eq('id', outreachRow.id);
 
-  // Increment confirmed_count
   const newCount = (request.confirmed_count || 0) + 1;
   await supabase.from('requests').update({ confirmed_count: newCount }).eq('id', request.id);
 
-  await reply(
-    from,
-    `✅ شکریہ! آپ کی تصدیق ہو گئی۔ Please go to *${request.hospital}* as soon as possible. جزاکاللہ خیر`,
-    request.id,
-    outreachRow.donor_id
-  );
+  const { lat, lng } = resolveHospitalCoords(request.hospital);
+  const donorCoords = { lat: outreachRow.donors?.lat ?? outreachRow.donors?.latitude ?? 24.8607, lng: outreachRow.donors?.lng ?? outreachRow.donors?.longitude ?? 67.0104 };
+  const eta = await getRealETA(donorCoords.lat, donorCoords.lng, lat, lng);
+  const mapLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+  const arrivalMessage =
+    `✅ شکریہ! آپ کی تصدیق ہو گئی۔ Please go to *${request.hospital}* as soon as possible.\n\n` +
+    `📍 Route: ${mapLink}\n` +
+    `🕒 ETA: about ${eta.etaMinutes} minutes\n\n` +
+    `جزاکاللہ خیر`;
+
+  await reply(from, arrivalMessage, request.id, outreachRow.donor_id);
 
   // Buffer calculation: 3 confirmed donors per bottle requested
   const requiredDonors = (request.count || 1) * 3;

@@ -4,10 +4,12 @@ import Link from 'next/link';
 import { fetchRequests } from '../lib/api';
 
 const STATUS_STYLE = {
-  PENDING_INFO:  { dot: 'bg-yellow-400', label: 'text-yellow-400', text: 'Awaiting info' },
-  MATCHING:      { dot: 'bg-blue-400 animate-pulse', label: 'text-blue-400', text: 'Matching donors' },
-  COMPLETED:     { dot: 'bg-emerald-400', label: 'text-emerald-400', text: 'Completed' },
-  UNFULFILLABLE: { dot: 'bg-red-500', label: 'text-red-400', text: 'Unfulfillable' },
+  PENDING_INFO:     { dot: 'bg-yellow-400', label: 'text-yellow-400', text: 'Awaiting info' },
+  PENDING_VERIFICATION: { dot: 'bg-amber-400 animate-pulse', label: 'text-amber-300', text: 'Pending OCR' },
+  PENDING_APPROVAL: { dot: 'bg-orange-500 animate-pulse', label: 'text-orange-400', text: 'Pending Approval' },
+  MATCHING:         { dot: 'bg-blue-400 animate-pulse', label: 'text-blue-400', text: 'Matching donors' },
+  COMPLETED:        { dot: 'bg-emerald-400', label: 'text-emerald-400', text: 'Completed' },
+  UNFULFILLABLE:    { dot: 'bg-red-500', label: 'text-red-400', text: 'Unfulfillable' },
 };
 
 const URGENCY_STYLE = {
@@ -31,6 +33,8 @@ export default function HomePage() {
   const [requests, setRequests] = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
+  const [filter, setFilter] = useState('ALL');
+  const [query, setQuery] = useState('');
 
   async function load() {
     try {
@@ -51,120 +55,53 @@ export default function HomePage() {
   }, []);
 
   const active    = requests.filter(r => r.status === 'MATCHING');
-  const pending   = requests.filter(r => r.status === 'PENDING_INFO');
+  const pending   = requests.filter(r => ['PENDING_INFO', 'PENDING_VERIFICATION', 'PENDING_APPROVAL'].includes(r.status));
   const completed = requests.filter(r => ['COMPLETED', 'UNFULFILLABLE'].includes(r.status));
+  const filtered = requests.filter(r => {
+    const matchesFilter = filter === 'ALL' || r.status === filter;
+    const haystack = `${r.hospital || ''} ${r.blood_group || ''} ${r.raw_input || ''}`.toLowerCase();
+    return matchesFilter && haystack.includes(query.toLowerCase());
+  });
 
   return (
-    <div>
-      {/* Page header */}
-      <div className="flex items-start justify-between mb-8">
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Outreach Console</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Simulating donor responses for Al-Khidmat blood network
-          </p>
+          <div className="signal-label text-blood">Live dispatch log</div>
+          <h1 className="text-2xl font-bold tracking-tight mt-1">Emergency Blood Command Center</h1>
+          <p className="text-slate-500 text-sm mt-1">Triage, verification, and donor outreach in one operational view.</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500 font-mono bg-card border border-border rounded-lg px-3 py-2">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          live · polling every 3s
+          live · 3s polling
         </div>
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: 'Active requests',  value: active.length,    color: 'text-blue-400' },
-          { label: 'Awaiting info',    value: pending.length,   color: 'text-yellow-400' },
-          { label: 'Resolved today',   value: completed.length, color: 'text-emerald-400' },
+          { label: 'Pending OCR / review', value: pending.length, color: 'text-amber-400' },
+          { label: 'Fulfilled / closed', value: completed.length, color: 'text-emerald-400' },
+          { label: 'Requests in queue', value: requests.length, color: 'text-slate-200' },
         ].map(s => (
-          <div key={s.label} className="card text-center">
-            <div className={`text-3xl font-bold font-mono ${s.color}`}>{s.value}</div>
+          <div key={s.label} className="card relative overflow-hidden">
+            <div className={`text-3xl font-bold font-mono ${s.color}`}>{String(s.value).padStart(2, '0')}</div>
             <div className="text-slate-500 text-xs mt-1">{s.label}</div>
           </div>
         ))}
       </div>
 
-      {loading && (
-        <div className="text-center text-slate-600 py-16 text-sm">Loading requests…</div>
-      )}
-
-      {error && (
-        <div className="card border-red-500/30 text-red-400 text-sm text-center py-8">
-          Backend unreachable — is your Express server running on port 3001?
-        </div>
-      )}
-
-      {/* Request list */}
-      {!loading && requests.length === 0 && (
-        <div className="card text-center py-16">
-          <div className="text-4xl mb-3">🩸</div>
-          <div className="text-slate-400 text-sm">No requests yet</div>
-          <div className="text-slate-600 text-xs mt-1">
-            Send a message to your Telegram bot to create one
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {requests.map(req => {
-          const s = STATUS_STYLE[req.status] || STATUS_STYLE.PENDING_INFO;
-          const u = URGENCY_STYLE[req.urgency] || URGENCY_STYLE.normal;
-          const requiredDonors = (req.count || 1) * 3;
-          const pct = requiredDonors > 0
-            ? Math.min(100, Math.round((req.confirmed_count / requiredDonors) * 100))
-            : 0;
-
-          return (
-            <Link
-              key={req.id}
-              href={`/request/${req.id}`}
-              className="card flex items-center gap-5 hover:border-slate-600 transition-colors cursor-pointer group block"
-            >
-              {/* Blood group badge */}
-              <div className="w-14 h-14 rounded-lg bg-blood/10 border border-blood/20 flex items-center justify-center flex-shrink-0">
-                <span className="text-blood font-bold text-sm font-mono">{req.blood_group || '?'}</span>
-              </div>
-
-              {/* Main info */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-medium text-sm truncate">{req.hospital || 'Hospital TBD'}</span>
-                  <span className={`badge border ${u}`}>{req.urgency || 'normal'}</span>
-                </div>
-                <div className="text-slate-500 text-xs truncate">{req.raw_input}</div>
-
-                {/* Progress bar */}
-                {req.status === 'MATCHING' && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blood rounded-full transition-all duration-500"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <span className="text-xs font-mono text-slate-400">
-                      {req.confirmed_count}/{requiredDonors}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Status + time */}
-              <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
-                  <span className={`text-xs font-medium ${s.label}`}>{s.text}</span>
-                </div>
-                <span className="text-xs text-slate-600">{timeAgo(req.created_at)}</span>
-                <span className="text-xs text-slate-700">Wave {req.current_wave || 0}</span>
-              </div>
-
-              <svg className="w-4 h-4 text-slate-700 group-hover:text-slate-500 transition-colors flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </Link>
-          );
-        })}
+      <div className="command-grid">
+        <section className="panel queue-panel">
+          <div className="panel-heading"><div><span className="signal-label text-slate-500">01 / intake</span><h2>Request queue</h2></div><span className="font-mono text-xs text-slate-500">{filtered.length}/{requests.length}</span></div>
+          <div className="flex flex-col sm:flex-row gap-2 mb-3"><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search hospital, group, request..." className="field flex-1" /><select value={filter} onChange={e => setFilter(e.target.value)} className="field sm:w-44"><option value="ALL">All signals</option><option value="MATCHING">Matching</option><option value="PENDING_VERIFICATION">Pending OCR</option><option value="PENDING_APPROVAL">Review required</option><option value="COMPLETED">Completed</option></select></div>
+          {loading && <div className="empty-state">Loading live queue...</div>}
+          {error && <div className="empty-state text-red-400">Backend unreachable on port 3001.</div>}
+          {!loading && filtered.length === 0 && <div className="empty-state">No requests match this filter.</div>}
+          <div className="queue-list">{filtered.map(req => { const s = STATUS_STYLE[req.status] || STATUS_STYLE.PENDING_INFO; const requiredDonors = (req.count || 1) * 3; const pct = Math.min(100, Math.round(((req.confirmed_count || 0) / requiredDonors) * 100)); return <Link key={req.id} href={`/request/${req.id}`} className="queue-row group"><div className="queue-index">{String(req.id).padStart(4, '0')}</div><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><span className="font-semibold text-sm truncate">{req.blood_group || '?'} · {req.hospital || 'Hospital TBD'}</span><span className={`signal-label ${s.label}`}>{s.text}</span></div><div className="text-xs text-slate-500 truncate mt-1">{req.raw_input}</div>{req.status === 'MATCHING' && <div className="mt-2 flex items-center gap-2"><div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%` }} /></div><span className="font-mono text-[10px] text-slate-500">{req.confirmed_count || 0}/{requiredDonors}</span></div>}</div><div className={`urgency-mark ${req.urgency === 'critical' ? 'text-blood' : req.urgency === 'high' ? 'text-amber-400' : 'text-slate-600'}`}>●</div><span className="text-slate-700 group-hover:text-slate-300">›</span></Link>; })}</div>
+        </section>
+        <section className="panel map-panel"><div className="panel-heading"><div><span className="signal-label text-blue-400">02 / logistics</span><h2>Operational map</h2></div><span className="badge bg-blue-400/10 text-blue-300 border border-blue-400/20">Karachi region</span></div><div className="map-stage"><div className="map-grid" /><div className="map-ring ring-one" /><div className="map-ring ring-two" /><div className="map-ring ring-three" /><div className="map-hospital"><span /> HOSPITAL TARGET</div><div className="map-pin pin-a">A</div><div className="map-pin pin-b">B</div><div className="map-pin pin-c">C</div><div className="route route-a" /><div className="route route-b" /><div className="map-legend"><span><i className="bg-blood" />Critical</span><span><i className="bg-blue-400" />Route</span><span><i className="bg-emerald-400" />Confirmed</span></div></div><div className="grid grid-cols-3 gap-2 mt-3 text-center"><div className="telemetry"><span>WAVE RADIUS</span><strong>5.0 km</strong></div><div className="telemetry"><span>FASTEST ETA</span><strong>-- min</strong></div><div className="telemetry"><span>ROUTES</span><strong>OSRM / fallback</strong></div></div></section>
+        <section className="panel telemetry-panel"><div className="panel-heading"><div><span className="signal-label text-emerald-400">03 / response</span><h2>Wave telemetry</h2></div><span className="font-mono text-xs text-slate-500">AUTO</span></div><div className="telemetry-stack"><div className="telemetry-block"><span>Current wave</span><strong>{active[0]?.current_wave || 0}<small>/ 3</small></strong></div><div className="telemetry-block"><span>Target ratio</span><strong>3<small>:1</small></strong></div><div className="telemetry-block"><span>Dispatch mode</span><strong className="text-emerald-400">{active.length ? 'ACTIVE' : 'STANDBY'}</strong></div></div><div className="status-note"><span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" /> ETA appears on donor confirmation; routes use donor coordinates and hospital lookup.</div></section>
       </div>
     </div>
   );

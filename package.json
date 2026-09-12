@@ -4,8 +4,9 @@
   "description": "Autonomous emergency blood donor matching system",
   "main": "server.js",
   "scripts": {
-    "start": "node --watch --env-file=.env.example server.js",
-    "dev": "node --watch --env-file=.env.example server.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "benchmark": "node scripts/benchmark.js"
   },
   "dependencies": {
     "@google/genai": "^0.7.0",

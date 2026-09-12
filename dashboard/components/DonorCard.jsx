@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { simulateDonorReply } from '../lib/api';
+import MessageLog from './MessageLog';
 
 // Quick reply buttons — map to realistic Urdu/English messages
 // that the Gemini classifier handles correctly
@@ -35,7 +36,7 @@ const STATUS_CONFIG = {
   INELIGIBLE: { label: 'Ineligible', style: 'bg-orange-500/20 text-orange-400' },
 };
 
-export default function DonorCard({ outreachRow, onReplySent }) {
+export default function DonorCard({ outreachRow, messages = [], onReplySent }) {
   const [customText, setCustomText] = useState('');
   const [sending, setSending] = useState(false);
   const [lastSent, setLastSent] = useState(null);
@@ -106,6 +107,21 @@ export default function DonorCard({ outreachRow, onReplySent }) {
             ? `🚨 ${request.urgency?.toUpperCase()} — ${request.blood_group} blood needed at ${request.hospital}. Reply YES to confirm, NO to decline, or tell us when you can come.`
             : 'Blood donation request — details in backend log'}
         </p>
+      </div>
+
+      {outreachRow.eta && (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="telemetry"><span>ROUTE ETA</span><strong className="text-blue-300">{outreachRow.eta.etaMinutes} min</strong></div>
+          <div className="telemetry"><span>DISTANCE</span><strong>{outreachRow.eta.distanceKm} km</strong></div>
+        </div>
+      )}
+
+      <div className="donor-chat">
+        <div className="flex items-center justify-between mb-2">
+          <span className="signal-label text-slate-500">Private donor chat</span>
+          <span className="text-[10px] font-mono text-slate-600">{messages.length} msg</span>
+        </div>
+        <MessageLog messages={messages} />
       </div>
 
       {/* Last sent confirmation */}

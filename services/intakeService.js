@@ -211,6 +211,7 @@ const supabase = require('../config/supabase');
 const { parseRequest } = require('./geminiService');
 const { launchWave } = require('./waveManager');
 const { logMessage } = require('./logService');
+const { verifyRequest } = require('./verificationService');
 
 // ── Channel-aware send ────────────────────────────────────────────────────────
 // Determines the right transport based on the phone/chat_id prefix.
@@ -237,7 +238,7 @@ async function sendToRequester(to, text, requestId) {
 }
 
 // ── Entry point (called by both Twilio webhook and Telegram webhook) ───────────
-async function handleRequesterMessage(from, body) {
+async function handleRequesterMessage(from, body, imageBuffer = null) {
   console.log(`\n[IntakeService] 📨 Message from ${from}: "${body}"`);
 
   // Check for existing open request from this phone/chat_id
@@ -255,20 +256,49 @@ async function handleRequesterMessage(from, body) {
     if (existing.status === 'PENDING_INFO') {
       console.log(`[IntakeService] Existing PENDING_INFO request (${existing.id}). Merging reply.`);
       await mergeAndRetry(existing, body, from);
-    } else if (existing.status === 'MATCHING') {
+      return;
+    }
+
+    if (existing.status === 'PENDING_VERIFICATION') {
+      console.log(`[IntakeService] Existing PENDING_VERIFICATION request (${existing.id}). Waiting for requisition image.`);
+      if (imageBuffer && imageBuffer.length > 0) {
+        await completeVerification(existing, from, imageBuffer);
+      } else {
+        await sendToRequester(from, 'Please send a clear requisition image so we can verify the request before matching donors.', existing.id);
+      }
+      return;
+    }
+
+    if (existing.status === 'MATCHING') {
       console.log(`[IntakeService] Request ${existing.id} already MATCHING. Sending status.`);
       await sendStatusUpdate(existing, from);
+      return;
     }
-    return;
   }
 
-  // No open request — new intake
   console.log(`[IntakeService] No open request. Starting new intake.`);
-  await startNewRequest(body, from);
+  await startNewRequest(body, from, imageBuffer);
 }
 
 // ── New request ───────────────────────────────────────────────────────────────
-async function startNewRequest(body, requesterPhone) {
+async function completeVerification(request, requesterPhone, imageBuffer) {
+  const { verifyRequisition } = require('./visionService');
+  const verification = await verifyRequisition(imageBuffer);
+
+  await supabase.from('requests').update({
+    status: verification.is_valid ? 'MATCHING' : 'PENDING_APPROVAL',
+    follow_up_question: verification.is_valid ? null : `Verification review: ${verification.reason}`,
+  }).eq('id', request.id);
+
+  if (verification.is_valid) {
+    await sendToRequester(requesterPhone, `✅ Requisition verified. We are starting donor matching now.`, request.id);
+    launchWave(request.id, 1).catch(err => console.error('[IntakeService] Wave launch error:', err.message));
+  } else {
+    await sendToRequester(requesterPhone, `⚠️ Requisition needs human review. A coordinator will check the uploaded slip.`, request.id);
+  }
+}
+
+async function startNewRequest(body, requesterPhone, imageBuffer = null) {
   const parsed = await parseRequest(body);
 
   if (!parsed.is_complete) {
@@ -283,7 +313,6 @@ async function startNewRequest(body, requesterPhone) {
         urgency: parsed.urgency || 'normal',
         status: 'PENDING_INFO',
         confirmed_count: 0,
-        // follow_up_question: parsed.follow_up_question,
       })
       .select()
       .single();
@@ -294,6 +323,9 @@ async function startNewRequest(body, requesterPhone) {
     await sendToRequester(requesterPhone, parsed.follow_up_question, newReq.id);
 
   } else {
+    const verification = verifyRequest(parsed);
+    const status = verification.isValid ? 'PENDING_VERIFICATION' : 'PENDING_APPROVAL';
+
     const { data: newReq, error } = await supabase
       .from('requests')
       .insert({
@@ -303,24 +335,37 @@ async function startNewRequest(body, requesterPhone) {
         count: parsed.count || 1,
         hospital: parsed.hospital,
         urgency: parsed.urgency || 'normal',
-        status: 'MATCHING',
+        status: status,
         confirmed_count: 0,
+        follow_up_question: verification.isValid
+          ? 'Please send a clear requisition image to verify this request before matching donors.'
+          : `Verification failed: ${verification.reason}`,
       })
       .select()
       .single();
 
     if (error) { console.error('[IntakeService] Insert failed:', error.message); return; }
 
-    console.log(`[IntakeService] ✅ Complete request ${newReq.id}. Launching Wave 1.`);
+    if (!verification.isValid) {
+      console.log(`[IntakeService] ⚠️ Request ${newReq.id} verification failed. Queued for human approval.`);
+      await sendToRequester(
+        requesterPhone,
+        `⚠️ Your request has been queued for human coordinator approval. Reason: ${verification.reason}. We will update you shortly.`,
+        newReq.id
+      );
+      return;
+    }
+
+    console.log(`[IntakeService] ⚠️ Request ${newReq.id} requires requisition image verification.`);
     await sendToRequester(
       requesterPhone,
-      `✅ Got it! Searching for *${newReq.count} bottle(s)* of *${newReq.blood_group}* blood (targeting ${newReq.count * 3} donors) near *${newReq.hospital}*.\n\nWe'll update you as donors confirm. شکریہ`,
+      '✅ We have your request details. Please send a clear requisition image or doctor slip so we can verify the request before donor matching begins.',
       newReq.id
     );
 
-    launchWave(newReq.id, 1).catch(err =>
-      console.error('[IntakeService] Wave launch error:', err.message)
-    );
+    if (imageBuffer && imageBuffer.length > 0) {
+      await completeVerification(newReq, requesterPhone, imageBuffer);
+    }
   }
 }
 
@@ -342,18 +387,35 @@ async function mergeAndRetry(existingRequest, newBody, requesterPhone) {
     await supabase.from('requests').update(updates).eq('id', existingRequest.id);
     await sendToRequester(requesterPhone, parsed.follow_up_question, existingRequest.id);
   } else {
-    updates.status = 'MATCHING';
-    updates.follow_up_question = null;
+    // Run verification checkpoint
+    const verification = verifyRequest({
+      blood_group: updates.blood_group,
+      count: updates.count,
+      hospital: updates.hospital,
+      is_complete: true
+    });
+
+    updates.status = verification.isValid ? 'PENDING_VERIFICATION' : 'PENDING_APPROVAL';
+    updates.follow_up_question = verification.isValid
+      ? 'Please send a clear requisition image to verify this request before matching donors.'
+      : `Verification failed: ${verification.reason}`;
+
     await supabase.from('requests').update(updates).eq('id', existingRequest.id);
+
+    if (!verification.isValid) {
+      console.log(`[IntakeService] ⚠️ Merged request ${existingRequest.id} verification failed. Queued for human approval.`);
+      await sendToRequester(
+        requesterPhone,
+        `⚠️ Your request has been queued for human coordinator approval. Reason: ${verification.reason}. We will update you shortly.`,
+        existingRequest.id
+      );
+      return;
+    }
 
     await sendToRequester(
       requesterPhone,
-      `✅ Perfect! Searching for *${updates.count} bottle(s)* of *${updates.blood_group}* blood (targeting ${updates.count * 3} donors) near *${updates.hospital}*.\n\nWe'll update you as donors confirm. شکریہ`,
+      '✅ We have your updated request details. Please send a clear requisition image or doctor slip so we can verify the request before donor matching begins.',
       existingRequest.id
-    );
-
-    launchWave(existingRequest.id, 1).catch(err =>
-      console.error('[IntakeService] Wave launch error:', err.message)
     );
   }
 }

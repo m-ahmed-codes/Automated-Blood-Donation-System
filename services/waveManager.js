@@ -13,11 +13,10 @@
 
 const supabase = require('../config/supabase');
 const { getRankedDonors } = require('./matchingEngine');
-// const { sendWhatsApp }  = require('../config/twilio');
 const { logMessage } = require('./logService');
+const { computeWaveParams } = require('./contextEngine');
 require('dotenv').config();
 
-const WAVE_TIMEOUT_MS = parseInt(process.env.WAVE_TIMEOUT_MS || '45000');
 const MAX_WAVES = parseInt(process.env.MAX_WAVES || '3');
 
 // Active timers keyed by requestId — lets us cancel if request completes early
@@ -67,11 +66,25 @@ async function launchWave(requestId, waveNumber) {
     return;
   }
 
-  // Update current_wave on the request row
-  await supabase.from('requests').update({ current_wave: waveNumber, status: 'MATCHING' }).eq('id', requestId);
+  const { waveSize, waveTimeoutMs, bufferRatio, reasoning } = await computeWaveParams({
+    urgency: request.urgency,
+    createdAt: request.created_at,
+    bloodGroup: request.blood_group,
+  });
+  console.log(`[WaveManager] [DACE] ${reasoning}`);
+  await logMessage({
+    phone: request.requester_phone,
+    direction: 'outbound',
+    body: `[DACE] ${reasoning}`,
+    requestId,
+  });
 
-  // Get ranked donors for this wave
-  const donors = await getRankedDonors(requestId, request.blood_group, request.hospital);
+  await supabase.from('requests').update({
+    current_wave: waveNumber,
+    status: 'MATCHING',
+  }).eq('id', requestId);
+
+  const donors = await getRankedDonors(requestId, request.blood_group, request.hospital, waveSize);
 
   if (donors.length === 0) {
     console.warn('[WaveManager] No eligible donors left in database. Marking UNFULFILLABLE.');
@@ -129,14 +142,13 @@ async function launchWave(requestId, waveNumber) {
   }
 
   console.log(`[WaveManager] ✅ Wave ${waveNumber} dispatched to ${donors.length} donor(s).`);
-  console.log(`[WaveManager] ⏱ Escalation timer set for ${WAVE_TIMEOUT_MS / 1000}s`);
+  console.log(`[WaveManager] ⏱ Escalation timer set for ${waveTimeoutMs / 1000}s`);
 
-  // ── Escalation timer ──────────────────────────────────────────────────────
   const timer = setTimeout(async () => {
     activeTimers.delete(requestId);
     console.log(`\n[WaveManager] ⏰ Timer expired for request ${requestId} after Wave ${waveNumber}`);
     await checkAndEscalate(requestId, waveNumber);
-  }, WAVE_TIMEOUT_MS);
+  }, waveTimeoutMs);
 
   // Store so we can cancel it if request completes before timeout
   activeTimers.set(requestId, timer);
@@ -160,7 +172,7 @@ async function checkAndEscalate(requestId, completedWave) {
     return;
   }
 
-  const requiredDonors = (request.count || 1) * 3;
+  const requiredDonors = (request.count || 1) * (request.buffer_ratio || 3);
   console.log(`[WaveManager] Post-wave check: ${request.confirmed_count}/${requiredDonors} confirmed for ${request.count} bottle(s) requested`);
 
   if (request.confirmed_count >= requiredDonors) {

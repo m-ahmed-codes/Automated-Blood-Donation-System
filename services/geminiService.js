@@ -21,9 +21,58 @@ const BLOOD_GROUP_MAP = {
   'AB_POSITIVE': 'AB+',
   'AB_NEGATIVE': 'AB-'
 };
+// ── Rate-limit aware Gemini caller with exponential backoff ───────────────────
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 5000; // start at 5s, then 10s, then 20s
+
+async function callGeminiWithBackoff(systemInstruction, cleanedUserText, responseSchema) {
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await genai.models.generateContent({
+        model: MODEL,
+        contents: cleanedUserText,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema,
+        }
+      });
+
+      const rawText = typeof result.text === 'function'
+        ? result.text()
+        : (result.text || result.response?.text());
+
+      let parsed;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        const cleanedJson = rawText.replace(/```json|```/gi, '').trim();
+        parsed = JSON.parse(cleanedJson);
+      }
+
+      if (parsed.blood_group && BLOOD_GROUP_MAP[parsed.blood_group]) {
+        parsed.blood_group = BLOOD_GROUP_MAP[parsed.blood_group];
+      }
+
+      console.log('[Gemini] Processed Result for DB:', parsed);
+      return { parsed, usedFallback: false };
+    } catch (err) {
+      lastError = err;
+      const isRateLimit = err.message?.includes('429') || err.message?.toLowerCase().includes('quota');
+      if (!isRateLimit || attempt === MAX_RETRIES) break;
+
+      const waitMs = BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
+      console.warn(`[Gemini] ⏳ Rate-limited (attempt ${attempt}/${MAX_RETRIES}). Retrying in ${waitMs / 1000}s...`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+  console.error(`[Gemini] ❌ All ${MAX_RETRIES} retries exhausted. Activating deterministic fallback.`);
+  return { parsed: null, usedFallback: true, error: lastError };
+}
+
 // ── Shared helper ─────────────────────────────────────────────────────────────
 async function callGemini(systemInstruction, userText, responseSchema) {
-
   const cleanedUserText = userText
     .replace(/\b([a-zA-Z]{1,2})\s*\+/gi, '$1 positive ')
     .replace(/\b([a-zA-Z]{1,2})\s*\-/gi, '$1 negative ')
@@ -32,36 +81,11 @@ async function callGemini(systemInstruction, userText, responseSchema) {
 
   console.log(`[Gemini] Usertext :::::: "${cleanedUserText}"`);
 
-  const result = await genai.models.generateContent({
-    model: MODEL,
-    contents: cleanedUserText,
-    config: {
-      systemInstruction,
-      responseMimeType: 'application/json',
-      responseSchema,
-    }
-  });
+  const { parsed, usedFallback, error } = await callGeminiWithBackoff(systemInstruction, cleanedUserText, responseSchema);
 
-  // const raw = result.text;
-
-
-  const rawText = typeof result.text === 'function'
-    ? result.text()
-    : (result.text || result.response?.text());
-
-
-
-  let parsed;
-  try {
-    parsed = JSON.parse(rawText);
-  } catch {
-    const cleanedJson = rawText.replace(/```json|```/gi, '').trim();
-    parsed = JSON.parse(cleanedJson);
-  }
-
-  // 3. 🎯 MAP BACK TO DB FORMAT (e.g. O_POSITIVE -> O+)
-  if (parsed.blood_group && BLOOD_GROUP_MAP[parsed.blood_group]) {
-    parsed.blood_group = BLOOD_GROUP_MAP[parsed.blood_group];
+  if (usedFallback) {
+    // Graceful degradation: re-throw so callers can catch and handle
+    throw new Error(`Gemini API unavailable after ${MAX_RETRIES} retries: ${error?.message}`);
   }
 
   console.log('[Gemini] Processed Result for DB:', parsed);

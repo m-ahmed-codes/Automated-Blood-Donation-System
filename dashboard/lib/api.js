@@ -45,3 +45,27 @@ export async function simulateDonorReply(donorPhone, donorName, body) {
   if (!res.ok) throw new Error('Webhook POST failed');
   return res.json();
 }
+
+export async function approveRequest(id) {
+  const res = await fetch(`${BASE}/dashboard/requests/${id}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Approve POST failed');
+  return res.json();
+}
+
+export async function rejectRequest(id) {
+  const res = await fetch(`${BASE}/dashboard/requests/${id}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Reject POST failed');
+  return res.json();
+}
+
+export async function fetchDonors() {
+  const res = await fetch(`${BASE}/dashboard/donors`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to fetch donors');
+  return res.json();
+}

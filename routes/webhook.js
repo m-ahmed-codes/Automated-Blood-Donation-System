@@ -49,7 +49,9 @@ router.post('/', async (req, res) => {
     *,
     donors!inner (
       id,
-      phone
+      phone,
+      lat,
+      lng
     )
   `)
       .eq('donors.phone', from)
@@ -73,7 +75,7 @@ router.post('/', async (req, res) => {
     } else {
       // ── REQUESTER PATH ──────────────────────────────────────────────────
       console.log(`[Webhook] 🔀 Routing to intakeService (no open outreach found)`);
-      await handleRequesterMessage({ from, body });
+      await handleRequesterMessage(from, body);
     }
 
   } catch (err) {

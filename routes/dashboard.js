@@ -7,6 +7,21 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../config/supabase');
+const { launchWave } = require('../services/waveManager');
+const { sendToRequester } = require('../services/intakeService');
+const { getRealETA } = require('../services/logisticsAgent');
+const { resolveHospitalCoords } = require('../services/matchingEngine');
+
+async function addRouteTelemetry(rows, hospitalName) {
+  const destination = resolveHospitalCoords(hospitalName);
+  return Promise.all((rows || []).map(async row => {
+    const donor = row.donors;
+    const eta = donor?.lat != null && donor?.lng != null
+      ? await getRealETA(donor.lat, donor.lng, destination.lat, destination.lng)
+      : null;
+    return { ...row, eta, hospital_coords: destination };
+  }));
+}
 
 // ── GET /api/dashboard/requests ──────────────────────────────────────────────
 // All active requests with their current status
@@ -36,7 +51,7 @@ router.get('/requests/:id', async (req, res) => {
 
   const { data: outreach } = await supabase
     .from('outreach')
-    .select('*, donors(id, name, neighbourhood, blood_group, phone)')
+    .select('*, donors(id, name, neighbourhood, blood_group, phone, lat, lng)')
     .eq('request_id', id)
     .order('wave_number', { ascending: true });
 
@@ -48,7 +63,8 @@ router.get('/requests/:id', async (req, res) => {
 
   // console.log(request, outreach, messages);
 
-  res.json({ request, outreach: outreach || [], messages: messages || [] });
+  const outreachWithTelemetry = await addRouteTelemetry(outreach, request.hospital);
+  res.json({ request, outreach: outreachWithTelemetry, messages: messages || [] });
 });
 
 // ── GET /api/dashboard/outreach/pending ─────────────────────────────────────
@@ -59,7 +75,7 @@ router.get('/outreach/pending', async (req, res) => {
 
   let query = supabase
     .from('outreach')
-    .select('*, donors(id, name, neighbourhood, blood_group, phone), requests(blood_group, hospital, urgency, count, confirmed_count)')
+    .select('*, donors(id, name, neighbourhood, blood_group, phone, lat, lng), requests(blood_group, hospital, urgency, count, confirmed_count)')
     .eq('status', 'SENT')
     .order('sent_at', { ascending: false });
 
@@ -67,7 +83,15 @@ router.get('/outreach/pending', async (req, res) => {
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  const rows = await Promise.all((data || []).map(async row => {
+    const destination = resolveHospitalCoords(row.requests?.hospital);
+    const donor = row.donors;
+    const eta = donor?.lat != null && donor?.lng != null
+      ? await getRealETA(donor.lat, donor.lng, destination.lat, destination.lng)
+      : null;
+    return { ...row, eta, hospital_coords: destination };
+  }));
+  res.json(rows);
 });
 
 // ── GET /api/dashboard/donors ────────────────────────────────────────────────
@@ -78,6 +102,87 @@ router.get('/donors', async (req, res) => {
     .order('name');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// ── POST /api/dashboard/requests/:id/approve ─────────────────────────────────
+router.post('/requests/:id/approve', async (req, res) => {
+  const { id } = req.params;
+
+  const { data: request, error: fetchErr } = await supabase
+    .from('requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (fetchErr || !request) {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+
+  if (request.status !== 'PENDING_APPROVAL') {
+    return res.status(400).json({ error: 'Request is not in PENDING_APPROVAL status' });
+  }
+
+  // Update request status to MATCHING
+  const { error: updateErr } = await supabase
+    .from('requests')
+    .update({ status: 'MATCHING', follow_up_question: null })
+    .eq('id', id);
+
+  if (updateErr) {
+    return res.status(500).json({ error: updateErr.message });
+  }
+
+  // Send approval update to requester
+  await sendToRequester(
+    request.requester_phone,
+    `✅ Your request has been approved by our coordinator! We are initiating search waves now.`,
+    id
+  );
+
+  // Trigger Wave 1
+  launchWave(id, 1).catch(err => {
+    console.error('[Dashboard] Wave launch failed:', err.message);
+  });
+
+  res.json({ success: true, message: 'Request approved. Wave 1 launched.' });
+});
+
+// ── POST /api/dashboard/requests/:id/reject ─────────────────────────────────
+router.post('/requests/:id/reject', async (req, res) => {
+  const { id } = req.params;
+
+  const { data: request, error: fetchErr } = await supabase
+    .from('requests')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (fetchErr || !request) {
+    return res.status(404).json({ error: 'Request not found' });
+  }
+
+  if (request.status !== 'PENDING_APPROVAL') {
+    return res.status(400).json({ error: 'Request is not in PENDING_APPROVAL status' });
+  }
+
+  // Update request status to UNFULFILLABLE
+  const { error: updateErr } = await supabase
+    .from('requests')
+    .update({ status: 'UNFULFILLABLE', follow_up_question: 'Rejected by coordinator.' })
+    .eq('id', id);
+
+  if (updateErr) {
+    return res.status(500).json({ error: updateErr.message });
+  }
+
+  // Send rejection message to requester
+  await sendToRequester(
+    request.requester_phone,
+    `❌ Unfortunately, your request could not be verified by our coordinator. Please double check details or contact direct hotlines (e.g., Edhi 1058, Chippa 1020).`,
+    id
+  );
+
+  res.json({ success: true, message: 'Request rejected. Requester notified.' });
 });
 
 module.exports = router;

@@ -2,12 +2,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { fetchRequestDetail } from '../../../lib/api';
+import { fetchRequestDetail, approveRequest, rejectRequest } from '../../../lib/api';
 import DonorCard from '../../../components/DonorCard';
 import MessageLog from '../../../components/MessageLog';
 
 const STATUS_STYLE = {
   PENDING_INFO: { label: 'Awaiting info', color: 'text-yellow-400', bar: 'bg-yellow-400' },
+  PENDING_VERIFICATION: { label: 'Pending OCR verification', color: 'text-amber-300', bar: 'bg-amber-400' },
+  PENDING_APPROVAL: { label: 'Pending Approval', color: 'text-orange-400', bar: 'bg-orange-500' },
   MATCHING: { label: 'Matching donors', color: 'text-blue-400', bar: 'bg-blue-400' },
   COMPLETED: { label: 'Completed', color: 'text-emerald-400', bar: 'bg-emerald-400' },
   UNFULFILLABLE: { label: 'Unfulfillable', color: 'text-red-400', bar: 'bg-red-500' },
@@ -31,6 +33,7 @@ export default function RequestDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('donors');  // 'donors' | 'transcript'
+  const [chatTab, setChatTab] = useState('requester');
 
   const load = useCallback(async () => {
     try {
@@ -72,6 +75,10 @@ export default function RequestDetailPage() {
     : 0;
 
   const confirmedRows = outreach.filter(r => ['CONFIRMED', 'RESCHEDULED'].includes(r.status));
+  const chatDonors = outreach.filter(row => row.donors?.id);
+  const chatMessages = chatTab === 'requester'
+    ? messages.filter(message => !message.donor_id)
+    : messages.filter(message => String(message.donor_id) === String(chatTab));
 
   return (
     <div className="space-y-6">
@@ -126,12 +133,56 @@ export default function RequestDetailPage() {
           </div>
         </div>
 
+        {/* Human Checkpoint Approval Section */}
+        {request.status === 'PENDING_APPROVAL' && (
+          <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-4 space-y-3">
+            <div className="text-sm font-semibold text-orange-400 flex items-center gap-2">
+              <span className="w-2 h-2 bg-orange-500 rounded-full animate-ping" />
+              ⚠️ Human Verification Checkpoint (Ground Rule 05 Compliance)
+            </div>
+            <p className="text-xs text-slate-300">
+              This request was suspended by the Verification Agent: <strong className="text-orange-200">{request.follow_up_question || 'Suspicious request parameters.'}</strong>
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  if (confirm('Approve this request and start donor matching?')) {
+                    await approveRequest(request.id);
+                    load();
+                  }
+                }}
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold transition-colors"
+              >
+                Approve Request
+              </button>
+              <button
+                onClick={async () => {
+                  if (confirm('Reject this request and notify requester?')) {
+                    await rejectRequest(request.id);
+                    load();
+                  }
+                }}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold transition-colors"
+              >
+                Reject Request
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Original message */}
         <div className="bg-slate-900 rounded-lg p-3 border border-border">
           <div className="text-xs text-slate-600 mb-1 font-mono">Original request</div>
           <p className="text-sm text-slate-300 italic">"{request.raw_input}"</p>
           <div className="text-xs text-slate-600 mt-1">from {request.requester_phone}</div>
         </div>
+
+        {request.follow_up_question && (
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+            <div className="text-xs text-blue-300 font-medium mb-1">Agent reasoning / follow-up</div>
+            <p className="text-sm text-slate-300">{request.follow_up_question}</p>
+          </div>
+        )}
 
         {/* Completion summary */}
         {request.status === 'COMPLETED' && confirmedRows.length > 0 && (
@@ -204,6 +255,7 @@ export default function RequestDetailPage() {
                     <DonorCard
                       key={row.id}
                       outreachRow={row}
+                      messages={messages.filter(message => String(message.donor_id) === String(row.donor_id))}
                       onReplySent={load}
                     />
                   ))}
@@ -217,10 +269,31 @@ export default function RequestDetailPage() {
       {/* TRANSCRIPT TAB */}
       {tab === 'transcript' && (
         <div className="card">
-          <div className="text-xs text-slate-600 font-mono mb-4">
-            Full message log · {messages.length} messages
+          <div className="flex items-start justify-between gap-3 mb-4">
+            <div>
+              <div className="text-xs text-slate-400 font-semibold">Individual conversations</div>
+              <div className="text-[10px] text-slate-600 font-mono mt-1">Select a participant to isolate their messages</div>
+            </div>
+            <span className="text-[10px] text-slate-600 font-mono">{chatMessages.length} messages</span>
           </div>
-          <MessageLog messages={messages} />
+
+          <div className="flex gap-1 overflow-x-auto border-b border-border pb-2 mb-4">
+            <button onClick={() => setChatTab('requester')} className={`chat-tab ${chatTab === 'requester' ? 'chat-tab-active' : ''}`}>
+              Requester
+            </button>
+            {chatDonors.map(row => (
+              <button key={row.donors.id} onClick={() => setChatTab(String(row.donors.id))} className={`chat-tab ${chatTab === String(row.donors.id) ? 'chat-tab-active' : ''}`}>
+                {row.donors.name}
+                <span className="text-[9px] opacity-60">{row.status}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mb-3 flex items-center gap-2 text-xs text-slate-500">
+            <span className={`w-2 h-2 rounded-full ${chatTab === 'requester' ? 'bg-blue-400' : 'bg-emerald-400'}`} />
+            {chatTab === 'requester' ? 'Requester conversation' : `Donor conversation · ${chatDonors.find(row => String(row.donors.id) === chatTab)?.donors?.name || 'Unknown donor'}`}
+          </div>
+          <MessageLog messages={chatMessages} />
         </div>
       )}
     </div>

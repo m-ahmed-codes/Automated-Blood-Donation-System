@@ -1,249 +1,413 @@
-# 🩸 Blood Donor Matching System — Backend
+# Emergency Blood Donor Matching System
 
-> Autonomous emergency blood donor matching — no human coordinator required.
-> Requesters send a message via **Telegram**; the system finds, ranks, and contacts donors via **WhatsApp (Twilio)** — fully hands-free.
+An autonomous, multi-channel blood donor coordination system for emergency requests. Requesters submit requests through Telegram, Gemini extracts the request details, requisition images are verified before matching, compatible donors are ranked by eligibility and travel time, and donor outreach is dispatched in timed waves.
 
----
+The project also includes a Next.js operations dashboard for request monitoring, human verification, donor simulation, ETA visibility, wave progress, and individual donor conversations.
 
-## Stack
+## Architecture Overview
 
-| Layer | Technology |
-|---|---|
-| **Runtime** | Node.js (v18+) with `--watch` |
-| **HTTP Server** | Express.js |
-| **Database** | Supabase (PostgreSQL) |
-| **NLU / AI** | Google Gemini 2.0 Flash (`@google/genai`) |
-| **Requester Channel** | Telegram Bot API (`node-telegram-bot-api`) |
-| **Donor Channel** | Twilio WhatsApp Sandbox |
-| **Proxy Support** | `undici` + `socks-proxy-agent` |
-
----
-
-## How It Works
-
-1. A **requester** messages the Telegram bot (e.g. *"Need 2 O+ donors at Civil Hospital urgently"*)
-2. **Gemini** parses the message (handles English, Urdu, Roman Urdu) and extracts `blood_group`, `hospital`, `count`, `urgency`
-3. If info is incomplete, the bot asks a warm follow-up question in the user's own language
-4. Once complete, the system **ranks nearby eligible donors** by distance × response rate and launches a **wave** of outreach messages via Twilio WhatsApp
-5. Donor replies ("haan aa raha hoon", "kal aa sakta hoon") are classified by Gemini and automatically update request state in Postgres
-6. If a wave doesn't yield enough confirmations, a new wave is auto-escalated after a configurable timeout
-
----
-
-## Architecture
-
-```
-Telegram (Requester)
-    │
-    ▼
+```text
+Requester on Telegram
+        |
+        v
 POST /api/telegram
-    │
-    ├─ /start command ──────────────────────► Welcome message
-    │
-    └─ Text message ────────────────────────► intakeService.handleRequesterMessage()
-                                                  │
-                                                  ├─ PENDING_INFO: Gemini asks follow-up
-                                                  └─ Complete → launchWave(requestId, 1)
-                                                                    │
-                                                              waveManager
-                                                              rank → Twilio send → timer
-                                                              → escalate if not fulfilled
-
-WhatsApp (Donor reply via Twilio or Fake Console)
-    │
-    ▼
-POST /api/webhook
-    │
-    └─ open outreach row? ──YES──► donorService.handleDonorReply()
-                                        │
-                                        ├─ confirm           → increment confirmed_count
-                                        ├─ decline           → mark DECLINED
-                                        ├─ reschedule        → mark RESCHEDULED + store time
-                                        ├─ eligibility_update → mark INELIGIBLE
-                                        └─ unclear           → ask for clarification
+        |
+        v
+telegramWebhook.js
+        |
+        v
+intakeService.js ---- Gemini request parsing
+        |
+        +--> PENDING_INFO: ask for missing blood group, count, or hospital
+        |
+        +--> PENDING_VERIFICATION: wait for requisition image
+                         |
+                         v
+              visionService.js / Gemini Vision
+                         |
+                 +-------+-------+
+                 |               |
+               MATCHING     PENDING_APPROVAL
+                 |               |
+                 v               v
+          waveManager.js   Dashboard/admin review
+                 |
+                 v
+          matchingEngine.js
+          compatibility + eligibility + ETA ranking
+                 |
+                 v
+          Twilio WhatsApp or test simulation
+                 |
+                 v
+          POST /api/webhook
+                 |
+                 v
+          donorService.js
+          confirm / decline / reschedule / ineligible
 ```
 
----
+## End-to-End Workflow
+
+1. A requester sends a blood request to the Telegram bot.
+2. `geminiService.js` extracts blood group, bottle count, hospital, urgency, and missing-field questions.
+3. Incomplete requests are saved as `PENDING_INFO` and remain conversational.
+4. Complete requests pass deterministic validation through `verificationService.js`.
+5. Valid complete requests enter `PENDING_VERIFICATION` and the requester is asked for a requisition image.
+6. `telegramWebhook.js` downloads the Telegram image and passes its buffer to `visionService.js`.
+7. Gemini Vision extracts hospital, doctor, patient, units, registration number, stamp, confidence, and verification status.
+8. Verified requests move to `MATCHING`; rejected or uncertain requests move to `PENDING_APPROVAL`.
+9. A coordinator can approve or reject pending requests in the dashboard.
+10. `waveManager.js` starts donor outreach in waves.
+11. `matchingEngine.js` filters and ranks compatible donors using eligibility, history, proximity, and ETA.
+12. Donors receive WhatsApp messages, or test donors are recorded without sending real messages.
+13. Donor replies are classified and processed by `donorService.js`.
+14. Confirming donors receive a hospital route link, ETA, and distance.
+15. The request reaches completion after the configured donor buffer target, normally three confirmed donors per bottle.
+
+## Backend
+
+### Runtime and services
+
+The backend is a Node.js and Express application. `server.js` mounts the HTTP routes and registers the Telegram webhook when `PUBLIC_URL` is configured.
+
+| Area | File | Responsibility |
+|---|---|---|
+| Server | `server.js` | Express startup, middleware, route mounting |
+| Telegram | `routes/telegramWebhook.js` | Requester text, Telegram photos, admin approval commands |
+| Webhooks | `routes/webhook.js` | Twilio and dashboard donor reply routing |
+| Dashboard API | `routes/dashboard.js` | Requests, donor outreach, transcripts, approval endpoints |
+| Intake | `services/intakeService.js` | Request state machine and channel-aware replies |
+| Parsing | `services/geminiService.js` | Request and donor intent extraction |
+| Validation | `services/verificationService.js` | Blood group, bottle count, and hospital checks |
+| Vision | `services/visionService.js` | Requisition image analysis and confidence result |
+| Matching | `services/matchingEngine.js` | Compatibility, cooldown, scoring, and ETA-aware ranking |
+| Logistics | `services/logisticsAgent.js` | OSRM route duration and distance with fallback |
+| Waves | `services/waveManager.js` | Dispatch, timers, escalation, and unfulfillable state |
+| Donors | `services/donorService.js` | Confirm, decline, reschedule, eligibility, and completion |
+| Context | `services/contextEngine.js` | Adaptive wave size, timeout, and buffer reasoning |
+| Logging | `services/logService.js` | Inbound/outbound message audit records |
+
+### Request state machine
+
+```text
+PENDING_INFO
+    |
+    | all required text fields received
+    v
+PENDING_VERIFICATION
+    |
+    +--> valid requisition image --> MATCHING
+    |
+    +--> failed or uncertain image --> PENDING_APPROVAL
+                                      |
+                                      +--> approve --> MATCHING
+                                      +--> reject  --> UNFULFILLABLE
+
+MATCHING --> COMPLETED
+         \\-> UNFULFILLABLE
+```
+
+### Natural-language intake
+
+Gemini parses English, Urdu, and Roman Urdu requests. Required request fields are:
+
+- `blood_group`, for example `O+`
+- `count`, the number of bottles or units
+- `hospital`, used for verification and coordinates
+
+Urgency values are `low`, `normal`, `high`, and `critical`.
+
+### Verification
+
+Deterministic validation rejects malformed blood groups, invalid counts, suspiciously high counts, and hospitals outside the configured registry. Complete requests then wait for an image instead of launching donor outreach immediately.
+
+Vision verification returns:
+
+- Hospital name
+- Doctor name
+- Doctor registration number
+- Patient name
+- Units required
+- Stamp presence
+- Confidence score
+- `auto_pass`, `pending_review`, or `rejected`
+
+The current fallback keeps an uploaded image in a pending-review result if Gemini is unavailable. It does not claim that the image is medically verified without the model or a human coordinator.
+
+### Matching and donor buffer
+
+Donors must have a compatible blood group, must not have been contacted already for the request, and must be outside the 90-day donation cooldown.
+
+The default fulfillment target is:
+
+```text
+required confirmations = bottles requested x 3
+```
+
+The ranking score combines:
+
+```text
+proximity score = 40 / (distance km + 0.1)
+history score   = 20 x response history rate
+exact match     = 10 point bonus
+ETA penalty     = min(20, ETA minutes x 0.25)
+final score     = proximity + history + exact match - ETA penalty
+```
+
+### ETA and logistics
+
+`services/logisticsAgent.js` receives donor and hospital coordinates and requests a driving route from OSRM. It returns `etaMinutes` and `distanceKm`.
+
+If OSRM fails, the system calculates Haversine distance and estimates travel time using an average speed fallback. Hospital coordinates currently come from the lookup in `matchingEngine.js`; unknown hospitals use a Karachi-center fallback.
+
+ETA is used in donor ranking and is exposed by the dashboard API. Donor cards show ETA and distance, and a confirming donor receives a Google Maps directions link.
+
+### Adaptive waves
+
+The context engine adjusts wave size, timeout, and buffer reasoning using urgency, time bucket, blood-group scarcity, and donor availability. The wave manager:
+
+- dispatches a ranked donor batch
+- records `outreach` rows
+- logs each outbound message
+- skips real Twilio for `is_test_donor` records
+- starts an escalation timer
+- launches the next wave when the target is still short
+- cancels timers when a request is complete
+- marks the request `UNFULFILLABLE` after maximum waves or no eligible donors
+
+## Dashboard
+
+The dashboard is a Next.js 14 App Router application in `dashboard/`. It polls the backend approximately every three seconds and is designed as a tactical operations console rather than a public requester interface.
+
+### Main command center
+
+The home page provides:
+
+- Active, pending, closed, and total request telemetry
+- Search by hospital, blood group, or request text
+- Filters for matching, pending OCR, review, and completed requests
+- Status and urgency signals
+- Donor confirmation progress against the three-to-one target
+- Current wave number
+- Operational logistics visualization with hospital target, donor markers, radius rings, and route vectors
+- Wave telemetry showing active or standby status and target ratio
+
+### Request detail page
+
+Each request page contains:
+
+- Request status, hospital, urgency, bottle count, and progress
+- `PENDING_APPROVAL` coordinator controls
+- Original requester message
+- Verification reason or follow-up state
+- Donor outreach grouped by wave
+- ETA and distance for donors with coordinates
+- Test-mode donor response controls
+- Individual donor chat embedded directly inside each donor card
+- Requester-only conversation view
+- Full transcript view with selectable requester and donor tabs
+- Completion summary for confirmed and rescheduled donors
+
+### Individual donor chats
+
+Every outreach row is linked to a donor through `donor_id`. The request detail page filters `messages_log` by that ID and passes only matching messages into that donor's card. This keeps each donor's inbound and outbound conversation isolated.
+
+The card also provides test controls for:
+
+- Confirm
+- Decline
+- Reschedule
+- Recently donated
+- Custom text replies
+
+These controls send through the same donor webhook and service logic used by real replies.
+
+### Dashboard limitations
+
+The current operational map is a visual dashboard panel, not a live Mapbox map. Its rings, pins, and route vectors communicate the dispatch model but do not yet update as an interactive geographic canvas.
+
+The backend currently supports approval, rejection, polling, donor simulation, and transcript viewing. Manual wave forcing, timer pause, donor injection, operator audit logs, live Mapbox tiles, image storage, and analytics heatmaps are not implemented.
+
+## API Reference
+
+### Requester and donor routes
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/telegram` | Telegram text and requisition photo webhook |
+| `POST` | `/api/webhook` | Twilio or dashboard donor reply webhook |
+
+### Dashboard routes
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/dashboard/requests` | Latest request queue |
+| `GET` | `/api/dashboard/requests/:id` | Request, donor outreach, ETA, and message log |
+| `GET` | `/api/dashboard/outreach/pending` | Test-mode outreach awaiting donor response |
+| `GET` | `/api/dashboard/donors` | Donor directory |
+| `POST` | `/api/dashboard/requests/:id/approve` | Approve and launch Wave 1 |
+| `POST` | `/api/dashboard/requests/:id/reject` | Reject and close a request |
+
+## Database
+
+Run `db/migrations.sql` in Supabase before using the live workflow. The schema contains:
+
+- `donors`: donor identity, compatibility, coordinates, history, and test mode
+- `requests`: requester state, request fields, wave state, and verification follow-up
+- `outreach`: donor dispatch status and wave number
+- `messages_log`: inbound and outbound audit messages with request and donor IDs
+- `verified_hospitals`: hospital registry support
+- `verified_doctors`: doctor registry support
+- `agent_trajectories`: structured agent execution records
+
+Important request statuses are:
+
+```text
+PENDING_INFO, PENDING_VERIFICATION, PENDING_APPROVAL,
+MATCHING, COMPLETED, UNFULFILLABLE
+```
+
+Donors need valid `lat` and `lng` values for real ETA results. The dashboard API returns those coordinates only as needed for route calculations and display data.
 
 ## Setup
 
-### 1. Install dependencies
+### Backend
+
+Requirements: Node.js 18 or newer.
 
 ```bash
 npm install
+npm start
 ```
 
-### 2. Configure environment
-
-Copy `.env.example` to `.env` and fill in all values:
+Development mode:
 
 ```bash
-cp .env.example .env
+npm run dev
 ```
 
-| Variable | Description |
-|---|---|
-| `SUPABASE_URL` | Your Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (not anon key) |
-| `GEMINI_API_KEY` | Google AI Studio API key |
-| `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
-| `PUBLIC_URL` | Your publicly reachable URL (ngrok or deployed) |
-| `TWILIO_ACCOUNT_SID` | Twilio Account SID |
-| `TWILIO_AUTH_TOKEN` | Twilio Auth Token |
-| `TWILIO_WHATSAPP_FROM` | e.g. `whatsapp:+14155238886` |
-| `TELEGRAM_PROXY` | *(Optional)* SOCKS5 proxy URI if Telegram is blocked |
+The backend listens on port 3001 unless configured otherwise by the application environment.
 
-### 3. Run database migrations
-
-Paste `db/migrations.sql` into your Supabase SQL editor and run it.
-Then run `db/seed.sql` to load 20 synthetic test donors across Karachi.
-
-### 4. Start the server
+### Dashboard
 
 ```bash
-npm run dev    # development (Node.js --watch)
-npm start      # production
+cd dashboard
+npm install
+npm run dev
 ```
 
-### 5. Expose for webhooks (local dev)
+Open `http://localhost:3000`. The dashboard proxies `/api/*` requests to `http://localhost:3001` through `dashboard/next.config.js`.
+
+Production dashboard:
 
 ```bash
-ngrok http 3001
-# Copy the https URL and set PUBLIC_URL=https://xxxx.ngrok.io in your .env
+cd dashboard
+npm run build
+npm start
 ```
 
-On startup, the server **auto-registers** the Telegram webhook if `PUBLIC_URL` and `TELEGRAM_BOT_TOKEN` are both set.
+### Environment variables
 
-To register manually:
+Create `.env` from `.env.example`. Configure:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `GEMINI_API_KEY`
+- Twilio credentials for real WhatsApp delivery
+- `PUBLIC_URL` for Telegram webhook registration
+- Optional `TELEGRAM_PROXY`
+- Optional `WAVE_SIZE`, `MAX_WAVES`, and `WAVE_TIMEOUT_MS`
+
+Never commit `.env`, bot tokens, database service keys, or Twilio credentials.
+
+## Telegram Setup
+
+1. Create a bot with BotFather.
+2. Put its token in `TELEGRAM_BOT_TOKEN`.
+3. Make the backend publicly reachable with a deployment or tunnel.
+4. Set `PUBLIC_URL` to the public origin.
+5. Start the backend so it registers `/api/telegram`.
+6. Send a request to the bot.
+7. When prompted, send a clear requisition image as a Telegram photo.
+
+If the log says:
+
+```text
+[TelegramWebhook] Failed to download photo
+```
+
+the vision service received no image buffer. Check the bot token, Telegram connectivity, proxy configuration, webhook URL, and backend restart state.
+
+## Test and Validation Commands
+
+From the repository root:
+
 ```bash
-curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://YOUR_URL/api/telegram"
+npm run benchmark
+node --check server.js
+node --check routes/telegramWebhook.js
+node --check routes/dashboard.js
+node --check services/intakeService.js
+node --check services/logisticsAgent.js
+node --check services/visionService.js
 ```
 
----
+From `dashboard/`:
 
-## API Endpoints
-
-### Webhook Routes
-
-| Method | Path | Channel | Description |
-|--------|------|---------|-------------|
-| `POST` | `/api/telegram` | Telegram | Receives updates from Telegram Bot API |
-| `POST` | `/api/webhook` | Twilio | Receives donor WhatsApp replies; also used by Fake Donor Console |
-
-### Dashboard Routes (read-only)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/dashboard/requests` | All requests, most recent first |
-| `GET` | `/api/dashboard/requests/:id` | Single request + outreach rows + message log |
-| `GET` | `/api/dashboard/outreach/pending` | All `SENT` outreach rows (for Fake Donor Console) |
-| `GET` | `/api/dashboard/donors` | All donors |
-
-### Health Check
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Returns `{ status: "ok", timestamp }` |
-
----
-
-## Fake Donor Console (Testing)
-
-Since donors are contacted via Twilio WhatsApp, you can simulate donor replies from a Next.js dashboard by POSTing directly to `/api/webhook`:
-
-```js
-await fetch('http://localhost:3001/api/webhook', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    From: 'whatsapp:+92300000001',   // must match a phone in the outreach table
-    Body: 'haan aa raha hoon',
-    ProfileName: 'Test Donor 1',
-  }),
-});
+```bash
+npm run build
 ```
 
-- Donors seeded with `is_test_donor = true` skip real Twilio calls (logged only)
-- Replies are routed through the real `donorService` + Gemini intent classifier
-- All state changes persist to Postgres and are visible via the dashboard API
-
----
-
-## Wave System
-
-| Setting | Default | Notes |
-|---------|---------|-------|
-| `WAVE_TIMEOUT_MS` | `45000` (45s) | Set to `15000` for faster demos |
-| `MAX_WAVES` | `3` | After 3 waves without fulfillment → `UNFULFILLABLE` |
-| Wave size | `8 donors` | Hardcoded in `matchingEngine.js` |
-
-Donors are **ranked** within each wave by a composite score:
-
-```
-score = (response_history_rate × 0.6) + (proximity_score × 0.4)
-```
-
-Donors who have donated within the last 90 days are automatically excluded as ineligible.
-
----
-
-## Gemini NLU Layer
-
-Two functions power all language understanding — zero business logic lives in the AI layer:
-
-| Function | Input | Output |
-|---|---|---|
-| `parseRequest(text)` | Raw requester message | `{ blood_group, count, hospital, urgency, is_complete, follow_up_question }` |
-| `parseDonorIntent(text)` | Raw donor reply | `{ intent, reschedule_time, note }` |
-
-**Supported languages:** English · Urdu (اردو) · Roman Urdu · Mixed
-
-**Model:** `gemini-2.0-flash` — optimised for structured JSON extraction at low latency.
-
----
+Use test donors (`is_test_donor = true`) during development so donor outreach is logged and simulatable without sending real WhatsApp messages.
 
 ## Project Structure
 
-```
+```text
 blood-donor-backend/
-├── server.js                    # Express entry point; auto-registers Telegram webhook
-├── .env.example                 # Environment variable template
+├── server.js
 ├── package.json
-│
+├── README.md
+├── FEATURES-README.md
 ├── config/
-│   ├── supabase.js              # Supabase client singleton
-│   ├── telegram.js              # TelegramBot client + sendTelegram() helper
-│   └── twilio.js                # Twilio client + sendWhatsApp() helper
-│
+│   ├── supabase.js
+│   ├── telegram.js
+│   └── twilio.js
 ├── routes/
-│   ├── telegramWebhook.js       # POST /api/telegram — requester intake via Telegram
-│   ├── webhook.js               # POST /api/webhook  — donor replies via Twilio/console
-│   └── dashboard.js             # GET  /api/dashboard/* — read-only dashboard API
-│
+│   ├── dashboard.js
+│   ├── telegramWebhook.js
+│   └── webhook.js
 ├── services/
-│   ├── geminiService.js         # parseRequest() + parseDonorIntent() — Gemini 2.0 Flash
-│   ├── intakeService.js         # Requester conversation state machine
-│   ├── donorService.js          # Donor reply handling + outreach state updates
-│   ├── matchingEngine.js        # getRankedDonors() — pure scoring, no side effects
-│   ├── waveManager.js           # launchWave() + auto-escalation timer
-│   └── logService.js            # messages_log writes
-│
-└── db/
-    ├── migrations.sql           # Full schema: donors, requests, outreach, messages_log
-    └── seed.sql                 # 20 synthetic test donors across Karachi
+│   ├── contextEngine.js
+│   ├── daceService.js
+│   ├── donorService.js
+│   ├── geminiService.js
+│   ├── intakeService.js
+│   ├── logisticsAgent.js
+│   ├── matchingEngine.js
+│   ├── verificationService.js
+│   ├── visionService.js
+│   └── waveManager.js
+├── db/
+│   ├── migrations.sql
+│   └── seed.sql
+├── scripts/
+│   └── benchmark.js
+└── dashboard/
+    ├── app/
+    │   ├── globals.css
+    │   ├── layout.jsx
+    │   ├── page.jsx
+    │   └── request/[id]/page.jsx
+    ├── components/
+    │   ├── DonorCard.jsx
+    │   └── MessageLog.jsx
+    ├── lib/api.js
+    ├── next.config.js
+    └── package.json
 ```
 
----
+## Operational Safety
 
-## Database Schema
-
-| Table | Purpose |
-|---|---|
-| `donors` | Registered donors with location, blood group, response rate |
-| `requests` | Each inbound blood request + its current status |
-| `outreach` | Per-donor outreach attempts per request (tracks wave, status, response) |
-| `messages_log` | Full inbound/outbound message audit trail |
-
-**Request statuses:** `PENDING_INFO` → `MATCHING` → `COMPLETED` / `UNFULFILLABLE`
-
-**Outreach statuses:** `SENT` → `CONFIRMED` / `DECLINED` / `RESCHEDULED` / `INELIGIBLE`
+This system coordinates donor outreach; it does not replace medical professionals, hospital blood banks, or emergency services. Human approval is available for uncertain requisitions. Confirm hospital details, donor eligibility, and arrival status with the responsible coordinator before relying on any ETA or automated message.

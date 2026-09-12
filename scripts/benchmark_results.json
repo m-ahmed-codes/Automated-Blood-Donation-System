@@ -1,0 +1,329 @@
+{
+  "generatedAt": "2026-08-31T11:08:14.397Z",
+  "baselineResults": [
+    {
+      "label": "Clean-EN",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Clean-RU",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Clean-Urdu",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Clean-AB",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Clean-B-",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Incomplete-NoHospital",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Incomplete-NoBloodGroup",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    },
+    {
+      "label": "Incomplete-NoBothFields",
+      "coordinationTimeMs": 3600000,
+      "coordinationTimeMin": 60,
+      "batchSize": 3,
+      "compatibilityExpansion": false,
+      "fraudDetected": false,
+      "duplicateContactPossible": true,
+      "cooldownCheck": false
+    }
+  ],
+  "agentResults": [
+    {
+      "label": "Clean-EN",
+      "coordinationTimeMs": 86492,
+      "coordinationTimeMin": "1.442",
+      "isComplete": true,
+      "correctBloodGroup": true,
+      "correctHospital": true,
+      "verificationPass": true,
+      "verificationReason": null,
+      "compatibilityExpansion": true,
+      "compatibleGroupCount": 2,
+      "fraudDetected": false,
+      "cooldownCheck": true,
+      "error": null
+    },
+    {
+      "label": "Clean-RU",
+      "coordinationTimeMs": 2349,
+      "coordinationTimeMin": "0.039",
+      "isComplete": true,
+      "correctBloodGroup": true,
+      "correctHospital": true,
+      "verificationPass": true,
+      "verificationReason": null,
+      "compatibilityExpansion": true,
+      "compatibleGroupCount": 4,
+      "fraudDetected": false,
+      "cooldownCheck": true,
+      "error": null
+    },
+    {
+      "label": "Clean-Urdu",
+      "coordinationTimeMs": 62230,
+      "coordinationTimeMin": "1.037",
+      "isComplete": true,
+      "correctBloodGroup": true,
+      "correctHospital": false,
+      "verificationPass": false,
+      "verificationReason": "Hospital \"سول ہسپتال\" is not in the system registry. Suspended to verify coordinates.",
+      "compatibilityExpansion": true,
+      "compatibleGroupCount": 4,
+      "fraudDetected": true,
+      "cooldownCheck": true,
+      "error": null
+    },
+    {
+      "label": "Clean-AB",
+      "coordinationTimeMs": 2560,
+      "coordinationTimeMin": "0.043",
+      "isComplete": true,
+      "correctBloodGroup": true,
+      "correctHospital": true,
+      "verificationPass": true,
+      "verificationReason": null,
+      "compatibilityExpansion": true,
+      "compatibleGroupCount": 8,
+      "fraudDetected": false,
+      "cooldownCheck": true,
+      "error": null
+    },
+    {
+      "label": "Clean-B-",
+      "coordinationTimeMs": 120679,
+      "coordinationTimeMin": "2.011",
+      "isComplete": true,
+      "correctBloodGroup": true,
+      "correctHospital": true,
+      "verificationPass": true,
+      "verificationReason": null,
+      "compatibilityExpansion": true,
+      "compatibleGroupCount": 2,
+      "fraudDetected": false,
+      "cooldownCheck": true,
+      "error": null
+    },
+    {
+      "label": "Incomplete-NoHospital",
+      "coordinationTimeMs": 3970,
+      "error": "Gemini API unavailable after 3 retries: got status: 503 Service Unavailable. {\"error\":{\"code\":503,\"message\":\"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.\",\"status\":\"UNAVAILABLE\"}}"
+    },
+    {
+      "label": "Incomplete-NoBloodGroup",
+      "coordinationTimeMs": 9707,
+      "coordinationTimeMin": "0.162",
+      "isComplete": false,
+      "correctBloodGroup": true,
+      "correctHospital": true,
+      "verificationPass": true,
+      "verificationReason": null,
+      "compatibilityExpansion": false,
+      "compatibleGroupCount": 0,
+      "fraudDetected": false,
+      "cooldownCheck": true,
+      "error": null
+    },
+    {
+      "label": "Incomplete-NoBothFields",
+      "coordinationTimeMs": 5405,
+      "coordinationTimeMin": "0.090",
+      "isComplete": false,
+      "correctBloodGroup": true,
+      "correctHospital": true,
+      "verificationPass": true,
+      "verificationReason": null,
+      "compatibilityExpansion": false,
+      "compatibleGroupCount": 0,
+      "fraudDetected": false,
+      "cooldownCheck": true,
+      "error": null
+    }
+  ],
+  "summary": {
+    "avgBaselineMin": 60,
+    "avgAgentMs": 41346,
+    "speedupFactor": 87,
+    "bloodGroupAccuracy": 100,
+    "hospitalAccuracy": 85.71428571428571,
+    "fraudCaught": 1,
+    "intentClassification": {
+      "results": [
+        {
+          "id": "D1",
+          "label": "Confirm-EN",
+          "input": "Yes I can come now",
+          "expected": "confirm",
+          "got": "confirm",
+          "correct": true,
+          "latencyMs": 1751
+        },
+        {
+          "id": "D2",
+          "label": "Confirm-RU",
+          "input": "haan main aa raha hoon, theek hai",
+          "expected": "confirm",
+          "got": "confirm",
+          "correct": true,
+          "latencyMs": 2094
+        },
+        {
+          "id": "D3",
+          "label": "Confirm-Urdu",
+          "input": "جی ہاں میں ابھی آ سکتا ہوں",
+          "expected": "confirm",
+          "got": "confirm",
+          "correct": true,
+          "latencyMs": 15592
+        },
+        {
+          "id": "D4",
+          "label": "Decline-EN",
+          "input": "Sorry I cannot come",
+          "expected": "decline",
+          "got": "decline",
+          "correct": true,
+          "latencyMs": 2202
+        },
+        {
+          "id": "D5",
+          "label": "Decline-RU",
+          "input": "nahi aa sakta abhi, sorry",
+          "expected": "decline",
+          "got": "decline",
+          "correct": true,
+          "latencyMs": 2448
+        },
+        {
+          "id": "D6",
+          "label": "Reschedule-Tomorrow",
+          "input": "kal subah aa sakta hoon 9 baje",
+          "expected": "reschedule",
+          "got": "reschedule",
+          "correct": true,
+          "latencyMs": 60250
+        },
+        {
+          "id": "D7",
+          "label": "Reschedule-Evening",
+          "input": "I can come this evening around 6pm",
+          "expected": "reschedule",
+          "got": "reschedule",
+          "correct": true,
+          "latencyMs": 2501
+        },
+        {
+          "id": "D8",
+          "label": "Eligibility-EN",
+          "input": "I gave blood last month, sorry",
+          "expected": "eligibility_update",
+          "got": "eligibility_update",
+          "correct": true,
+          "latencyMs": 2751
+        },
+        {
+          "id": "D9",
+          "label": "Eligibility-RU",
+          "input": "maine pichle hafte khoon diya tha",
+          "expected": "eligibility_update",
+          "got": "eligibility_update",
+          "correct": true,
+          "latencyMs": 44051
+        },
+        {
+          "id": "D10",
+          "label": "Eligibility-Urdu",
+          "input": "میں نے تین ہفتے پہلے خون دیا تھا",
+          "expected": "eligibility_update",
+          "got": "eligibility_update",
+          "correct": true,
+          "latencyMs": 2609
+        },
+        {
+          "id": "D11",
+          "label": "Unclear-Question",
+          "input": "which hospital is it?",
+          "expected": "unclear",
+          "got": "unclear",
+          "correct": true,
+          "latencyMs": 4099
+        },
+        {
+          "id": "D12",
+          "label": "Unclear-Random",
+          "input": "ok thanks",
+          "expected": "unclear",
+          "got": "unclear",
+          "correct": true,
+          "latencyMs": 5269
+        },
+        {
+          "id": "D13",
+          "label": "Tricky-Reschedule-vs-Decline",
+          "input": "not now but tomorrow I can",
+          "expected": "reschedule",
+          "got": "reschedule",
+          "correct": true,
+          "latencyMs": 2631
+        }
+      ],
+      "precision": "100.0",
+      "correct": 13,
+      "total": 13
+    }
+  }
+}
